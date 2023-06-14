@@ -53,10 +53,7 @@ func (n *notifier) Notify(ctx context.Context,
 					match := isMatch(watchers, event.Name)
 					if match {
 						eventCh <- events.Event{File: event.Name, Timestamp: time.Now()}
-					} else {
-						n.logger.Printf("File changed but not a match %s\n", event.Name)
 					}
-
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -64,7 +61,7 @@ func (n *notifier) Notify(ctx context.Context,
 				}
 				errorCh <- err
 			case <-ctx.Done():
-				n.logger.Printf("Context done. Stopping the watcher...\n")
+				n.logger.Printf("Stopping the files watcher...\n")
 				return
 			}
 		}

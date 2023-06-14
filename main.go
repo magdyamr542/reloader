@@ -16,8 +16,10 @@ import (
 )
 
 func main() {
+	// Logger
 	logger := log.New(os.Stdout, "[reloader] ", log.Ldate|log.Ltime)
 
+	// Flags
 	before := flag.String("before", "", "The command to execute before running the main program.")
 	after := flag.String("after", "", "The command to execute after running the main program.")
 	command := flag.String("cmd", "", "The command to execute the main program. (required)")
@@ -74,16 +76,15 @@ func main() {
 		})
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	topLevelCtx, topLevelCancel := context.WithCancel(context.Background())
+	defer topLevelCancel()
 
 	// Stop on interruption.
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 	go func() {
 		<-interrupt
-		logger.Printf("Got signal to stop. Cancelling the context\n")
-		cancel()
+		topLevelCancel()
 	}()
 
 	// Events and Errors
@@ -92,7 +93,7 @@ func main() {
 
 	// Notifier
 	notifier := notifier.New(logger)
-	watcherCloser, err := notifier.Notify(ctx, watchers, eventCh, errWatchFilesCh)
+	watcherCloser, err := notifier.Notify(topLevelCtx, watchers, eventCh, errWatchFilesCh)
 	defer watcherCloser()
 	if err != nil {
 		log.Fatalf("init notifier: %v", err)
@@ -100,55 +101,59 @@ func main() {
 
 	// Execer
 	// Start for the first time and expect no errors.
-	errMainProgramCh := make(chan error)
 	exc := execer.New(c, logger)
-	stopper, err := exc.Exec(ctx, errMainProgramCh)
+	stopper, err := exc.Exec(topLevelCtx)
 	if err != nil {
 		log.Fatalf("execute program: %v", err)
 	}
 
 	// Watch for file changes and re execute the program
-	go func(stopper execer.Stopper) {
-		defer cancel()
-		logger.Printf("Starting the watch loop\n")
+
+	watchLoopDone := make(chan struct{}, 1)
+	go func(stopper execer.Stopper, outerCtx context.Context) {
+		defer topLevelCancel()
+		defer func() { watchLoopDone <- struct{}{} }()
 
 		for {
 			select {
 			case err := <-errWatchFilesCh:
 				logger.Printf("Error watch files: %v", err)
 
-			case err := <-errMainProgramCh:
-				logger.Printf("Error running the main program. Stopping the watch loop: %v", err)
-				return
-
-			case <-ctx.Done():
-				logger.Printf("Context done. Stopping the watch loop\n")
+			case <-outerCtx.Done():
+				logger.Printf("Stopping the current process and exiting...\n")
+				err := stopper()
+				if err != nil {
+					logger.Printf("Error stopping the current process: %v", err)
+				}
 				return
 
 			case event := <-eventCh:
-				logger.Printf("File %s changed at %v. Stopping the current execution...", event.File, event.Timestamp.Format("01-02-2006 15:04:05"))
+				logger.Printf("File %s changed at %v. Stopping the current process...", event.File, event.Timestamp.Format("01-02-2006 15:04:05"))
 
 				// First stop the current execution. This will stop the current main program and then execute
 				// the will run the 'after' command if it exists.
 				err := stopper()
 				if err != nil {
-					logger.Printf("Error while stopping the current execution: %v", err)
+					logger.Printf("Error stopping the current process: %v", err)
 					return
 				}
 
-				logger.Printf("Stopped the current execution. Reloading...\n")
+				logger.Printf("Stopped the current process. Rerun...\n")
 
 				// Then rerun the program again.
-				stopper, err = exc.Exec(ctx, errMainProgramCh)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				stopper, err = exc.Exec(ctx)
 				if err != nil {
-					logger.Fatalf("execute program: %v", err)
+					logger.Printf("Error executing program: %v", err)
 					return
 				}
 
 			}
 		}
 
-	}(stopper)
+	}(stopper, topLevelCtx)
 
-	<-ctx.Done()
+	<-topLevelCtx.Done()
+	<-watchLoopDone
 }
