@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -16,6 +17,13 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run() error {
+
 	// Logger
 	logger := log.New(os.Stdout, "[reloader] ", log.Ldate|log.Ltime)
 
@@ -33,7 +41,7 @@ func main() {
 	cmd := strings.TrimSpace(*command)
 	if cmd == "" {
 		flag.Usage()
-		logger.Fatalf("command is required.")
+		return fmt.Errorf("command is required")
 	}
 
 	realPatterns := []string{}
@@ -64,7 +72,7 @@ func main() {
 		if !filepath.IsAbs(dir) {
 			absDir, err := filepath.Abs(dir)
 			if err != nil {
-				logger.Fatalf("Can't get the absolute path from pattern %s: %v", p, err)
+				return fmt.Errorf("can't get the absolute path from pattern %s: %v", p, err)
 			}
 			dir = absDir
 		}
@@ -96,7 +104,7 @@ func main() {
 	watcherCloser, err := notifier.Notify(topLevelCtx, watchers, eventCh, errWatchFilesCh)
 	defer watcherCloser()
 	if err != nil {
-		log.Fatalf("init notifier: %v", err)
+		return fmt.Errorf("init notifier: %v", err)
 	}
 
 	// Execer
@@ -104,12 +112,13 @@ func main() {
 	exc := execer.New(c, logger)
 	stopper, err := exc.Exec(topLevelCtx)
 	if err != nil {
-		log.Fatalf("execute program: %v", err)
+		return fmt.Errorf("execute program: %v", err)
 	}
 
 	// Watch for file changes and re execute the program
 
 	watchLoopDone := make(chan struct{}, 1)
+	var errWatchLoop error
 	go func(stopper execer.Stopper, outerCtx context.Context) {
 		defer topLevelCancel()
 		defer func() { watchLoopDone <- struct{}{} }()
@@ -124,6 +133,7 @@ func main() {
 				err := stopper()
 				if err != nil {
 					logger.Printf("Error stopping the current process: %v", err)
+					errWatchLoop = err
 				}
 				return
 
@@ -135,6 +145,7 @@ func main() {
 				err := stopper()
 				if err != nil {
 					logger.Printf("Error stopping the current process: %v", err)
+					errWatchLoop = err
 					return
 				}
 
@@ -146,6 +157,7 @@ func main() {
 				stopper, err = exc.Exec(ctx)
 				if err != nil {
 					logger.Printf("Error executing program: %v", err)
+					errWatchLoop = err
 					return
 				}
 
@@ -156,4 +168,6 @@ func main() {
 
 	<-topLevelCtx.Done()
 	<-watchLoopDone
+
+	return errWatchLoop
 }
