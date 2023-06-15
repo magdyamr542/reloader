@@ -4,12 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/magdyamr542/reloader/config"
 	"github.com/magdyamr542/reloader/events"
 	"github.com/magdyamr542/reloader/execer"
@@ -22,12 +22,12 @@ func main() {
 	}
 }
 
+var loglevels = []string{"trace", "debug", "error", "info", "warn", "error"}
+
 func run() error {
 
-	// Logger
-	logger := log.New(os.Stdout, "[reloader] ", log.Ldate|log.Ltime)
-
 	// Flags
+	loglevel := flag.String("loglevel", "debug", fmt.Sprintf("The log level. One of %v. If provided wrong, logs will be disabled.", loglevels))
 	before := flag.String("before", "", "The command to execute before running the main program.")
 	after := flag.String("after", "", "The command to execute after running the main program.")
 	command := flag.String("cmd", "", "The command to execute the main program. (required)")
@@ -59,12 +59,19 @@ func run() error {
 		Patterns: realPatterns,
 	}
 
+	// Build the logger
+	logger := hclog.New(&hclog.LoggerOptions{
+		Name:  "reloader",
+		Level: hclog.LevelFromString(*loglevel),
+	})
+
 	// Build the watchers. These are all possible patterns:
 	// server/*.go
 	// server/client/*.go
 	// server.go
 	// *.go
 	// /abs/path/to/dir/*.go
+	logger.Debug("Building the file watchers...")
 	watchers := make([]events.Watcher, 0)
 	for _, p := range c.Patterns {
 		dir, pattern := filepath.Split(p)
@@ -77,7 +84,7 @@ func run() error {
 			dir = absDir
 		}
 
-		logger.Printf("Will watch %s\n", filepath.Join(dir, pattern))
+		logger.Debug("Will watch", "path", filepath.Join(dir, pattern))
 		watchers = append(watchers, events.Watcher{
 			Directory: dir,
 			Pattern:   pattern,
@@ -100,6 +107,7 @@ func run() error {
 	errWatchFilesCh := make(chan error)
 
 	// Notifier
+	logger.Debug("Init the notifier...")
 	notifier := notifier.New(logger)
 	watcherCloser, err := notifier.Notify(topLevelCtx, watchers, eventCh, errWatchFilesCh)
 	defer watcherCloser()
@@ -117,6 +125,7 @@ func run() error {
 
 	// Watch for file changes and re execute the program
 
+	logger.Debug("Starting watch loop...")
 	watchLoopDone := make(chan struct{}, 1)
 	var errWatchLoop error
 	go func(stopper execer.Stopper, outerCtx context.Context) {
@@ -126,37 +135,37 @@ func run() error {
 		for {
 			select {
 			case err := <-errWatchFilesCh:
-				logger.Printf("Error watch files: %v", err)
+				logger.Error("Error watch files", "err", err)
 
 			case <-outerCtx.Done():
-				logger.Printf("Stopping the current process and exiting...\n")
+				logger.Info("Stopping the current process and exiting...")
 				err := stopper()
 				if err != nil {
-					logger.Printf("Error stopping the current process: %v", err)
+					logger.Error("Error stopping the current process", "err", err)
 					errWatchLoop = err
 				}
 				return
 
 			case event := <-eventCh:
-				logger.Printf("File %s changed at %v. Stopping the current process...", event.File, event.Timestamp.Format("01-02-2006 15:04:05"))
+				logger.Debug("File changed. Stopping the current process...", "file", event.File, "changedAt", event.Timestamp.Format("01-02-2006 15:04:05"))
 
 				// First stop the current execution. This will stop the current main program and then execute
 				// the will run the 'after' command if it exists.
 				err := stopper()
 				if err != nil {
-					logger.Printf("Error stopping the current process: %v", err)
+					logger.Error("Error stopping the current process", "err", err)
 					errWatchLoop = err
 					return
 				}
 
-				logger.Printf("Stopped the current process. Rerun...\n")
+				logger.Debug("Stopped the current process. Rerun...")
 
 				// Then rerun the program again.
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				stopper, err = exc.Exec(ctx)
 				if err != nil {
-					logger.Printf("Error executing program: %v", err)
+					logger.Error("Error executing program", "err", err)
 					errWatchLoop = err
 					return
 				}

@@ -3,11 +3,11 @@ package notifier
 import (
 	"context"
 	"fmt"
-	"log"
 	"path/filepath"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/hashicorp/go-hclog"
 	"github.com/magdyamr542/reloader/events"
 )
 
@@ -22,10 +22,10 @@ type Notifier interface {
 type Closer func() error
 
 type notifier struct {
-	logger *log.Logger
+	logger hclog.Logger
 }
 
-func New(logger *log.Logger) Notifier {
+func New(logger hclog.Logger) Notifier {
 	return &notifier{logger: logger}
 }
 
@@ -61,7 +61,7 @@ func (n *notifier) Notify(ctx context.Context,
 				}
 				errorCh <- err
 			case <-ctx.Done():
-				n.logger.Printf("Stopping the files watcher...\n")
+				n.logger.Debug("Stopping the files watcher...")
 				return
 			}
 		}

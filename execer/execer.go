@@ -3,13 +3,13 @@ package execer
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/magdyamr542/reloader/config"
 )
 
@@ -29,10 +29,10 @@ type Execution struct {
 
 type execer struct {
 	config config.Config
-	logger *log.Logger
+	logger hclog.Logger
 }
 
-func New(config config.Config, logger *log.Logger) Execer {
+func New(config config.Config, logger hclog.Logger) Execer {
 	e := execer{config: config, logger: logger}
 	return &e
 }
@@ -43,7 +43,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 
 	// Run the before command
 	if config.Before != "" {
-		r.logger.Printf("Running before command %q\n", config.Before)
+		r.logger.Info("Running before command", "command", config.Before)
 		parts := strings.Split(config.Before, " ")
 		beforeCmd := newCmd(ctx, parts)
 		if err := beforeCmd.Run(); err != nil {
@@ -52,7 +52,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	}
 
 	// Run the command itself in a separate goroutine.
-	r.logger.Printf("Running command %q\n", config.Command)
+	r.logger.Info("Running command", "command", config.Command)
 	cmdContext, cancel := context.WithCancel(ctx)
 	parts := strings.Split(config.Command, " ")
 	mainCmd := newCmd(cmdContext, parts)
@@ -84,7 +84,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 
 		// Run the after command if possible
 		if config.After != "" {
-			r.logger.Printf("Running after command %q\n", config.After)
+			r.logger.Info("Running after command", "command", config.After)
 			parts := strings.Split(config.After, " ")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -107,8 +107,4 @@ func newCmd(ctx context.Context, parts []string) *exec.Cmd {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = os.Environ()
 	return cmd
-}
-
-func getPgID(cmd *exec.Cmd) (int, error) {
-	return syscall.Getpgid(cmd.Process.Pid)
 }
