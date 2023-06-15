@@ -108,7 +108,7 @@ func run() error {
 
 	// Notifier
 	logger.Debug("Init the notifier...")
-	notifier := notifier.New(logger)
+	notifier := notifier.New(logger.Named("notifier"))
 	watcherCloser, err := notifier.Notify(topLevelCtx, watchers, eventCh, errWatchFilesCh)
 	defer watcherCloser()
 	if err != nil {
@@ -117,7 +117,7 @@ func run() error {
 
 	// Execer
 	// Start for the first time and expect no errors.
-	exc := execer.New(c, logger)
+	exc := execer.New(c, logger.Named("execer"))
 	stopper, err := exc.Exec(topLevelCtx)
 	if err != nil {
 		return fmt.Errorf("execute program: %v", err)
@@ -135,13 +135,13 @@ func run() error {
 		for {
 			select {
 			case err := <-errWatchFilesCh:
-				logger.Error("Error watch files", "err", err)
+				logger.Error("Watch files", "err", err)
 
 			case <-outerCtx.Done():
 				logger.Info("Stopping the current process and exiting...")
 				err := stopper()
 				if err != nil {
-					logger.Error("Error stopping the current process", "err", err)
+					logger.Error("Stopping the current process", "err", err)
 					errWatchLoop = err
 				}
 				return
@@ -153,7 +153,7 @@ func run() error {
 				// the will run the 'after' command if it exists.
 				err := stopper()
 				if err != nil {
-					logger.Error("Error stopping the current process", "err", err)
+					logger.Error("Stopping the current process", "err", err)
 					errWatchLoop = err
 					return
 				}
@@ -165,7 +165,7 @@ func run() error {
 				defer cancel()
 				stopper, err = exc.Exec(ctx)
 				if err != nil {
-					logger.Error("Error executing program", "err", err)
+					logger.Error("Executing program", "err", err)
 					errWatchLoop = err
 					return
 				}
