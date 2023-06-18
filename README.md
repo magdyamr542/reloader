@@ -16,3 +16,7 @@ reloader \
 ### How it works:
 
 ![How it works](./example.png)
+
+### TODOS
+
+Use a yaml configuration.
