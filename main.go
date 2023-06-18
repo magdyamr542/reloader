@@ -63,8 +63,11 @@ func run() error {
 
 	// Build the logger
 	logger := hclog.New(&hclog.LoggerOptions{
-		Name:  "reloader",
-		Level: hclog.LevelFromString(*loglevel),
+		Name:            "reloader",
+		Level:           hclog.LevelFromString(*loglevel),
+		TimeFormat:      "2006-01-02T15:04:05",
+		Color:           hclog.AutoColor,
+		ColorHeaderOnly: true,
 	})
 
 	// Build the watchers. These are all possible patterns:
