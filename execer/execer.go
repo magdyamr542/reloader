@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/magdyamr542/reloader/config"
+	"github.com/magdyamr542/reloader/runnable"
 )
 
 // Execer starts a program based on some configuration.
@@ -28,12 +27,13 @@ type Execution struct {
 }
 
 type execer struct {
-	config config.Config
-	logger hclog.Logger
+	config          config.Config
+	logger          hclog.Logger
+	runnableCreator runnable.Creator
 }
 
-func New(config config.Config, logger hclog.Logger) Execer {
-	e := execer{config: config, logger: logger}
+func New(config config.Config, logger hclog.Logger, runnableCreator runnable.Creator) Execer {
+	e := execer{config: config, logger: logger, runnableCreator: runnableCreator}
 	return &e
 }
 
@@ -45,7 +45,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	if config.Before != "" {
 		r.logger.Info("Running before command", "command", config.Before)
 		parts := strings.Split(config.Before, " ")
-		beforeCmd := newCmd(ctx, parts)
+		beforeCmd := r.runnableCreator(ctx, parts)
 		if err := beforeCmd.Run(); err != nil {
 			return nil, fmt.Errorf("running command %q: %w", config.Before, err)
 		}
@@ -55,7 +55,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	r.logger.Info("Running command", "command", config.Command)
 	cmdContext, cancel := context.WithCancel(ctx)
 	parts := strings.Split(config.Command, " ")
-	mainCmd := newCmd(cmdContext, parts)
+	mainCmd := r.runnableCreator(cmdContext, parts)
 	err := mainCmd.Start()
 	if err != nil {
 		return nil, fmt.Errorf("can't start command %q: %w", config.Command, err)
@@ -68,15 +68,13 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	}()
 
 	stopper := func() error {
-		// Stop the current main program and wait for it.
+		// Stop the current main program.
 		cancel()
 		<-cmdContext.Done()
 
-		if mainCmd.Process != nil {
-			err := mainCmd.Process.Signal(os.Interrupt)
-			if err != nil {
-				return err
-			}
+		err := mainCmd.Signal(os.Interrupt)
+		if err != nil {
+			return err
 		}
 
 		// Wait for the main cmd to finish.
@@ -88,7 +86,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 			parts := strings.Split(config.After, " ")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			afterCmd := newCmd(ctx, parts)
+			afterCmd := r.runnableCreator(ctx, parts)
 			if err := afterCmd.Run(); err != nil {
 				return fmt.Errorf("running command %q: %w", config.After, err)
 			}
@@ -98,13 +96,4 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	}
 
 	return stopper, nil
-}
-
-func newCmd(ctx context.Context, parts []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = os.Environ()
-	return cmd
 }

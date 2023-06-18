@@ -14,6 +14,7 @@ import (
 	"github.com/magdyamr542/reloader/events"
 	"github.com/magdyamr542/reloader/execer"
 	"github.com/magdyamr542/reloader/notifier"
+	"github.com/magdyamr542/reloader/runnable"
 )
 
 func main() {
@@ -118,7 +119,9 @@ func run() error {
 
 	// Execer
 	// Start for the first time and expect no errors.
-	exc := execer.New(c, logger.Named("execer"))
+	exc := execer.New(c, logger.Named("execer"), func(ctx context.Context, command []string) runnable.Runnable {
+		return runnable.NewCmd(ctx, command)
+	})
 	stopper, err := exc.Exec(topLevelCtx)
 	if err != nil {
 		return fmt.Errorf("execute program: %v", err)
