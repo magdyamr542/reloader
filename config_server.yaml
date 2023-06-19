@@ -1,0 +1,13 @@
+loglevel: DEBUG
+
+before:
+  - command: go build -o ./cmd/server_binary ./cmd/server/server.go
+
+after:
+  - command: rm ./cmd/server_binary
+
+main:
+  command: ./cmd/server_binary
+
+patterns:
+  - ./cmd/server/*.go

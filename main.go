@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/magdyamr542/reloader/config"
@@ -19,53 +18,31 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Print(err)
+		fmt.Println(err)
 		os.Exit(1)
 	}
 }
 
-var loglevels = []string{"trace", "debug", "error", "info", "warn", "error"}
-
 func run() error {
-
 	// Flags
-	loglevel := flag.String("loglevel", "debug", fmt.Sprintf("The log level. One of %v. If provided wrong, logs will be disabled.", loglevels))
-	before := flag.String("before", "", "The command to execute before running the main program.")
-	after := flag.String("after", "", "The command to execute after running the main program.")
-	command := flag.String("cmd", "", "The command to execute the main program. (required)")
-	patterns := flag.String("patterns", "*", "Unix like file patters to watch for changes.\n"+
-		"This is a space separated list. E.g: 'src/cmd/*.go src/server/*.go'.\n"+
-		"The program will reload after a file of those changes.")
-
+	configfile := flag.String("config", "", "The path to a yaml config file. When this is used.")
 	flag.Parse()
 
-	// Build the config
-	cmd := strings.TrimSpace(*command)
-	if cmd == "" {
+	if *configfile == "" {
 		flag.Usage()
-		return fmt.Errorf("command is required")
+		return fmt.Errorf("config required")
 	}
 
-	realPatterns := []string{}
-	for _, p := range strings.Split(*patterns, " ") {
-		trimmed := strings.TrimSpace(p)
-		if len(trimmed) != 0 {
-			realPatterns = append(realPatterns, trimmed)
-		}
-	}
-
-	c := config.Config{
-		Before:   *before,
-		After:    *after,
-		Command:  cmd,
-		Patterns: realPatterns,
+	// Build the config
+	c, err := config.ParseFromFile(*configfile)
+	if err != nil {
+		return err
 	}
 
 	// Build the logger
 	logger := hclog.New(&hclog.LoggerOptions{
 		Name:            "reloader",
-		Level:           hclog.LevelFromString(*loglevel),
-		TimeFormat:      "2006-01-02T15:04:05",
+		Level:           hclog.LevelFromString(c.LogLevel),
 		Color:           hclog.AutoColor,
 		ColorHeaderOnly: true,
 	})
@@ -122,7 +99,7 @@ func run() error {
 
 	// Execer
 	// Start for the first time and expect no errors.
-	exc := execer.New(c, logger.Named("execer"), func(ctx context.Context, command []string) runnable.Runnable {
+	exc := execer.New(c, logger.Named("execer"), func(ctx context.Context, command config.CommandWithDir) runnable.Runnable {
 		return runnable.NewCmd(ctx, command)
 	})
 	stopper, err := exc.Exec(topLevelCtx)

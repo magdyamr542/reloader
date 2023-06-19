@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
+	"os/exec"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -41,54 +42,64 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 
 	config := r.config
 
-	// Run the before command
-	if config.Before != "" {
-		r.logger.Info("Running before command", "command", config.Before)
-		parts := strings.Split(config.Before, " ")
-		beforeCmd := r.runnableCreator(ctx, parts)
+	// Run the before commands
+	for _, command := range config.Before {
+		r.logger.Info("Running before command", "command", command.Command)
+		beforeCmdCtx, beforeCmdCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer beforeCmdCancel()
+		beforeCmd := r.runnableCreator(beforeCmdCtx, command)
 		if err := beforeCmd.Run(); err != nil {
-			return nil, fmt.Errorf("running command %q: %w", config.Before, err)
+			return nil, fmt.Errorf("running before command %q: %w", command.Command, err)
 		}
 	}
 
 	// Run the command itself in a separate goroutine.
-	r.logger.Info("Running command", "command", config.Command)
-	cmdContext, cancel := context.WithCancel(ctx)
-	parts := strings.Split(config.Command, " ")
-	mainCmd := r.runnableCreator(cmdContext, parts)
+	r.logger.Info("Running command", "command", config.Command.Command)
+	mainCmdCtx, mainCmdCancel := context.WithCancel(ctx)
+	mainCmd := r.runnableCreator(mainCmdCtx, config.Command)
 	err := mainCmd.Start()
 	if err != nil {
 		return nil, fmt.Errorf("can't start command %q: %w", config.Command, err)
 	}
 
-	mainCmdDone := make(chan struct{}, 1)
-	go func() {
-		mainCmd.Wait()
-		mainCmdDone <- struct{}{}
-	}()
-
 	stopper := func() error {
-		// Stop the current main program.
-		cancel()
-		<-cmdContext.Done()
+		r.logger.Debug("Stopping the current program's execution...")
 
-		err := mainCmd.Signal(os.Interrupt)
+		// Stop the current main program.
+		mainCmdCancel()
+		<-mainCmdCtx.Done()
+
+		err := mainCmd.Wait()
 		if err != nil {
-			return err
+			exitErr, isExit := err.(*exec.ExitError)
+			if !isExit {
+				return err
+			}
+
+			// Check the underlying process state's exit status
+			status, isWait := exitErr.Sys().(syscall.WaitStatus)
+			if !isWait {
+				return err
+			}
+
+			// Ignore the error if the process was killed by a signal
+			if status.Signaled() && (status.Signal() == os.Interrupt || status.Signal() == os.Kill) {
+				r.logger.Debug("Process was killed by signal", "signal", status.Signal(),
+					"pid", exitErr.ProcessState.Pid, "exitCode", exitErr.ProcessState.ExitCode())
+			} else {
+				return err
+			}
+
 		}
 
-		// Wait for the main cmd to finish.
-		<-mainCmdDone
-
 		// Run the after command if possible
-		if config.After != "" {
-			r.logger.Info("Running after command", "command", config.After)
-			parts := strings.Split(config.After, " ")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			afterCmd := r.runnableCreator(ctx, parts)
+		for _, command := range config.After {
+			r.logger.Info("Running after command", "command", command.Command)
+			afterCmdCtx, afterCmdCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer afterCmdCancel()
+			afterCmd := r.runnableCreator(afterCmdCtx, command)
 			if err := afterCmd.Run(); err != nil {
-				return fmt.Errorf("running command %q: %w", config.After, err)
+				return fmt.Errorf("running command %q: %w", command.Command, err)
 			}
 		}
 

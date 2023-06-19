@@ -1,0 +1,13 @@
+loglevel: DEBUG
+
+before:
+  - command: ls
+    directory: /home/amr
+
+main:
+  command: echo 'main command'
+
+patterns:
+  - ./*.go
+  - ./*.txt
+  - ./events/events.go
