@@ -122,27 +122,27 @@ func run() error {
 				logger.Error("Watch files", "err", err)
 
 			case <-outerCtx.Done():
-				logger.Info("Stopping the current process and exiting...")
+				logger.Info("Stopping the current program and exiting...")
 				err := stopper()
 				if err != nil {
-					logger.Error("Stopping the current process", "err", err)
+					logger.Error("Stopping the current program", "err", err)
 					errWatchLoop = err
 				}
 				return
 
 			case event := <-eventCh:
-				logger.Debug("File changed. Stopping the current process...", "file", event.File, "changedAt", event.Timestamp.Format("01-02-2006 15:04:05"))
+				logger.Debug("File changed. Stopping the program...", "file", event.File, "changedAt", event.Timestamp.Format("01-02-2006 15:04:05"))
 
 				// First stop the current execution. This will stop the current main program and then execute
 				// the will run the 'after' command if it exists.
 				err := stopper()
 				if err != nil {
-					logger.Error("Stopping the current process", "err", err)
+					logger.Error("Stopping the current program", "err", err)
 					errWatchLoop = err
 					return
 				}
 
-				logger.Debug("Stopped the current process. Rerun...")
+				logger.Debug("Stopped the current program. Rerun...")
 
 				// Then rerun the program again.
 				ctx, cancel := context.WithCancel(context.Background())

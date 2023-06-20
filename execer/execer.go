@@ -13,6 +13,12 @@ import (
 	"github.com/magdyamr542/reloader/runnable"
 )
 
+var (
+	// durationBeforeKill is the duration to wait after sending the process an Interrupt signal. After waiting and if the
+	// process didn't exit, we send a Kill signal.
+	durationBeforeKill = 10 * time.Second
+)
+
 // Execer starts a program based on some configuration.
 // It stops when the context is done.
 type Execer interface {
@@ -63,13 +69,26 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	}
 
 	stopper := func() error {
-		r.logger.Debug("Stopping the current program's execution...")
+		r.logger.Debug("Stopping the current program's execution by sending an Interrupt signal. Will kill after duration", "duration", durationBeforeKill)
+
+		cmdExited := false
 
 		// Stop the current main program.
-		mainCmdCancel()
-		<-mainCmdCtx.Done()
+		if err := mainCmd.Interrupt(); err != nil {
+			return err
+		}
+
+		go func() {
+			time.AfterFunc(durationBeforeKill, func() {
+				if !cmdExited {
+					r.logger.Debug("Current program didn't respond to the Interrupt signal. Sending a Kill signal...")
+					mainCmdCancel()
+				}
+			})
+		}()
 
 		err := mainCmd.Wait()
+		cmdExited = true
 		if err != nil {
 			exitErr, isExit := err.(*exec.ExitError)
 			if !isExit {
@@ -84,7 +103,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 
 			// Ignore the error if the process was killed by a signal
 			if status.Signaled() && (status.Signal() == os.Interrupt || status.Signal() == os.Kill) {
-				r.logger.Debug("Process was killed by signal", "signal", status.Signal(),
+				r.logger.Debug("Process exited by signal", "signal", status.Signal(),
 					"pid", exitErr.ProcessState.Pid, "exitCode", exitErr.ProcessState.ExitCode())
 			} else {
 				return err

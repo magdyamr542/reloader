@@ -19,6 +19,10 @@ type Runnable interface {
 	Start() error
 	// Wait blocks till the executable is done.
 	Wait() error
+	// Interrupt interrupts the runnable. The runnable should stop after it gets this call (maybe) doing some clean up.
+	Interrupt() error
+	// Kill kills the runnable. It won't get time to do clean up.
+	Kill() error
 }
 
 // Creator is a function that returns a Runnable.
@@ -43,6 +47,20 @@ func (o *osCmd) Start() error {
 
 func (o *osCmd) Wait() error {
 	return o.cmd.Wait()
+}
+
+func (o *osCmd) Interrupt() error {
+	if o.cmd.Process == nil {
+		return nil
+	}
+	return o.cmd.Process.Signal(os.Interrupt)
+}
+
+func (o *osCmd) Kill() error {
+	if o.cmd.Process == nil {
+		return nil
+	}
+	return o.cmd.Process.Kill()
 }
 
 func newCmd(ctx context.Context, command config.CommandWithDir) *exec.Cmd {
