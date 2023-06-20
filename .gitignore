@@ -1,3 +1,4 @@
 cmd/
 looper
 reloader
+config_server.yaml
