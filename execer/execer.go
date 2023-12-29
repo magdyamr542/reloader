@@ -77,7 +77,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, <-chan error, error) {
 	go func() {
 		err := <-cmdErrCh
 		if !wasStopped {
-			errCh <- fmt.Errorf("error running main command: %v", err)
+			errCh <- err
 		}
 	}()
 

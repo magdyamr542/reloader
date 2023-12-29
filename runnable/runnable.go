@@ -44,16 +44,16 @@ func (o *osCmd) RunCh() (<-chan error, error) {
 	}
 	errCh := make(chan error, 2)
 	go func() {
-		if err := o.cmd.Wait(); err != nil {
-			// We are notifying at most 2 things here.
-			// 1. The routine that waits for an error from this process and propagates upwards. This is done when the main
-			// command exists without the being stopped (without someone calling the stopper()).
-			// 2. The stopper() itself of the error, in this case a file was changed and the stopper() was called,
-			// the routine described in 1 should ignore this error since it's not really a program error but an error we get
-			// because we explicitly want to restart the command.
-			errCh <- err
-			errCh <- err
-		}
+		err := o.cmd.Wait()
+		// We are notifying at most 2 things here.
+		// 1. The routine that waits for an error from this process and propagates upwards. This is done when the main
+		// command exists without the being stopped (without someone calling the stopper()).
+		// 2. The stopper() itself of the error, in this case a file was changed and the stopper() was called,
+		// the routine described in 1 should ignore this error since it's not really a program error but an error we get
+		// because we explicitly want to restart the command.
+		errCh <- err
+		errCh <- err
+
 	}()
 	return errCh, nil
 }

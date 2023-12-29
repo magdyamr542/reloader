@@ -123,7 +123,9 @@ func run() error {
 
 			// Error running the main command.
 			case err := <-errExecCh:
-				logger.Error("Error executing main command", "err", err)
+				if err != nil {
+					logger.Error("Error executing main command", "err", err)
+				}
 				errWatchLoop = err
 				return
 
