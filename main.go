@@ -102,7 +102,7 @@ func run() error {
 	exc := execer.New(c, logger.Named("execer"), func(ctx context.Context, command config.CommandWithDir) runnable.Runnable {
 		return runnable.NewCmd(ctx, command)
 	})
-	stopper, err := exc.Exec(topLevelCtx)
+	stopper, errExecCh, err := exc.Exec(topLevelCtx)
 	if err != nil {
 		return fmt.Errorf("execute program: %v", err)
 	}
@@ -120,6 +120,12 @@ func run() error {
 			select {
 			case err := <-errWatchFilesCh:
 				logger.Error("Watch files", "err", err)
+
+			// Error running the main command.
+			case err := <-errExecCh:
+				logger.Error("Error executing main command", "err", err)
+				errWatchLoop = err
+				return
 
 			case <-outerCtx.Done():
 				logger.Info("Stopping the current program and exiting...")
@@ -145,7 +151,7 @@ func run() error {
 				logger.Debug("Stopped the current program. Rerun...")
 
 				// Then rerun the program again.
-				stopper, err = exc.Exec(outerCtx)
+				stopper, errExecCh, err = exc.Exec(outerCtx)
 				if err != nil {
 					logger.Error("Executing program", "err", err)
 					errWatchLoop = err

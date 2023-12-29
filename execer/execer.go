@@ -23,7 +23,7 @@ var (
 // Execer starts a program based on some configuration.
 // It stops when the context is done.
 type Execer interface {
-	Exec(ctx context.Context) (Stopper, error)
+	Exec(ctx context.Context) (Stopper, <-chan error, error)
 }
 
 // Stopper stops an execution of a program.
@@ -45,7 +45,7 @@ func New(config config.Config, logger hclog.Logger, runnableCreator runnable.Cre
 	return &e
 }
 
-func (r *execer) Exec(ctx context.Context) (Stopper, error) {
+func (r *execer) Exec(ctx context.Context) (Stopper, <-chan error, error) {
 
 	config := r.config
 
@@ -56,7 +56,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 		defer beforeCmdCancel()
 		beforeCmd := r.runnableCreator(beforeCmdCtx, command)
 		if err := beforeCmd.Run(); err != nil {
-			return nil, fmt.Errorf("running before command %q: %w", command.Command, err)
+			return nil, nil, fmt.Errorf("running before command %q: %w", command.Command, err)
 		}
 	}
 
@@ -64,19 +64,29 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	r.logger.Info("Running command", "command", config.Command.Command)
 	mainCmdCtx, mainCmdCancel := context.WithCancel(ctx)
 	mainCmd := r.runnableCreator(mainCmdCtx, config.Command)
-	err := mainCmd.Start()
+	cmdErrCh, err := mainCmd.RunCh()
 	if err != nil {
 		mainCmdCancel()
-		return nil, fmt.Errorf("can't start command %q: %w", config.Command, err)
+		return nil, nil, fmt.Errorf("can't start command %q: %w", config.Command, err)
 	}
 
+	errCh := make(chan error, 1)
+	killed := false
+	interrupted := false
+	wasStopped := false
+	go func() {
+		err := <-cmdErrCh
+		if !wasStopped {
+			errCh <- fmt.Errorf("error running main command: %v", err)
+		}
+	}()
+
 	stopper := func() error {
+		wasStopped = true
 		r.logger.Debug("Stopping by sending an Interrupt...")
 
 		// Cancel the ctx, thus ending the cmd. If the sent SigTerm doesn't respond within 10 seconds, hard kill.
 		mainCmdCancel()
-		killed := false
-		interrupted := false
 		go func() {
 			time.AfterFunc(durationWaitBeforeHardKill, func() {
 				if !interrupted {
@@ -91,7 +101,7 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 		}()
 
 		r.logger.Debug("Waiting for program to be done...")
-		err := mainCmd.Wait()
+		err := <-cmdErrCh
 		if !killed {
 			interrupted = true
 		}
@@ -131,5 +141,5 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 		return nil
 	}
 
-	return stopper, nil
+	return stopper, errCh, nil
 }

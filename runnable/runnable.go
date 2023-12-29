@@ -15,10 +15,9 @@ import (
 type Runnable interface {
 	// Run runs the executable. This starts and waits.
 	Run() error
-	// Start starts running the executable but doesn't wait for it.
-	Start() error
-	// Wait blocks till the executable is done.
-	Wait() error
+	// RunCh runs the executable but doesn't block. It returns a chan of err that receives the error returned
+	// by the executable after it's finished running.
+	RunCh() (<-chan error, error)
 	// Kill hard kills the executable (and any children created).
 	Kill() error
 }
@@ -39,12 +38,24 @@ func (o *osCmd) Run() error {
 	return o.cmd.Run()
 }
 
-func (o *osCmd) Start() error {
-	return o.cmd.Start()
-}
-
-func (o *osCmd) Wait() error {
-	return o.cmd.Wait()
+func (o *osCmd) RunCh() (<-chan error, error) {
+	if err := o.cmd.Start(); err != nil {
+		return nil, err
+	}
+	errCh := make(chan error, 2)
+	go func() {
+		if err := o.cmd.Wait(); err != nil {
+			// We are notifying at most 2 things here.
+			// 1. The routine that waits for an error from this process and propagates upwards. This is done when the main
+			// command exists without the being stopped (without someone calling the stopper()).
+			// 2. The stopper() itself of the error, in this case a file was changed and the stopper() was called,
+			// the routine described in 1 should ignore this error since it's not really a program error but an error we get
+			// because we explicitly want to restart the command.
+			errCh <- err
+			errCh <- err
+		}
+	}()
+	return errCh, nil
 }
 
 func (o *osCmd) Kill() error {
