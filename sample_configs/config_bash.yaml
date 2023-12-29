@@ -1,0 +1,25 @@
+loglevel: INFO
+
+runBefore:
+  - command:
+      program: ls
+      args: ["Hello"]
+  - command:
+      program: echo
+      args: ["Will run now..."]
+
+run:
+  command:
+    program: echo
+    args: ["Some computation..."]
+
+runAfter:
+  - command:
+      program: echo
+      args: ["Done running..."]
+  - command:
+      program: echo
+      args: ["Bye"]
+
+filePatterns:
+  - ./*.txt

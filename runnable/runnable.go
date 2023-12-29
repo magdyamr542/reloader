@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 
 	"github.com/magdyamr542/reloader/config"
@@ -63,8 +62,7 @@ func (o *osCmd) Kill() error {
 }
 
 func newCmd(ctx context.Context, command config.CommandWithDir) *exec.Cmd {
-	parts := strings.Split(command.Command, " ")
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd := exec.CommandContext(ctx, command.Command.Program, command.Command.Args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	// Setting this makes newly created processes have the same pgid. So, if the main command is a bash script that

@@ -24,22 +24,27 @@ var logLevels = map[string]struct{}{
 // Config configures the reloader
 type Config struct {
 	// The command to execute before the main program
-	Before []CommandWithDir `yaml:"before"`
+	Before []CommandWithDir `yaml:"runBefore"`
 	// The command to execute after the main program
-	After []CommandWithDir `yaml:"after"`
+	After []CommandWithDir `yaml:"runAfter"`
 	// The command to execute the main program
-	Command CommandWithDir `yaml:"main"`
+	Command CommandWithDir `yaml:"run"`
 	// The file patterns to watch
-	Patterns []string `yaml:"patterns"`
+	Patterns []string `yaml:"filePatterns"`
 	// The log level to use
 	LogLevel string `yaml:"loglevel,omitempty"`
 }
 
 // CommandWithDir defines a command to be executed inside some directory.
 type CommandWithDir struct {
-	Command string            `yaml:"command"`
+	Command Command           `yaml:"command"`
 	BaseDir string            `yaml:"directory,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty"`
+}
+
+type Command struct {
+	Program string   `yaml:"program"`
+	Args    []string `yaml:"args"`
 }
 
 func ParseFromFile(path string) (Config, error) {
@@ -88,9 +93,9 @@ func ParseFromFile(path string) (Config, error) {
 }
 
 func cleanCmd(cmd *CommandWithDir) error {
-	cmd.Command = strings.TrimSpace(cmd.Command)
-	if cmd.Command == "" {
-		return fmt.Errorf("command is empty")
+	cmd.Command.Program = strings.TrimSpace(cmd.Command.Program)
+	if cmd.Command.Program == "" {
+		return fmt.Errorf("program is empty")
 	}
 
 	if cmd.BaseDir == "" {
