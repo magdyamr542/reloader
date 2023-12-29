@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+
 	"github.com/magdyamr542/reloader/config"
 	"github.com/magdyamr542/reloader/runnable"
 )
 
 var (
-	// durationBeforeKill is the duration to wait after sending the process an Interrupt signal. After waiting and if the
-	// process didn't exit, we send a Kill signal.
-	durationBeforeKill = 10 * time.Second
+	// durationWaitBeforeHardKill is the duration to wait after sending the process an Interrupt signal. If the process,
+	// doesn't exit, we send a Kill signal.
+	durationWaitBeforeHardKill = 10 * time.Second
 )
 
 // Execer starts a program based on some configuration.
@@ -65,30 +66,36 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 	mainCmd := r.runnableCreator(mainCmdCtx, config.Command)
 	err := mainCmd.Start()
 	if err != nil {
+		mainCmdCancel()
 		return nil, fmt.Errorf("can't start command %q: %w", config.Command, err)
 	}
 
 	stopper := func() error {
-		r.logger.Debug("Stopping the current program's execution by sending an Interrupt signal. Will kill after duration", "duration", durationBeforeKill)
+		r.logger.Debug("Stopping by sending an Interrupt...")
 
-		cmdExited := false
-
-		// Stop the current main program.
-		if err := mainCmd.Interrupt(); err != nil {
-			return err
-		}
-
+		// Cancel the ctx, thus ending the cmd. If the sent SigTerm doesn't respond within 10 seconds, hard kill.
+		mainCmdCancel()
+		killed := false
+		interrupted := false
 		go func() {
-			time.AfterFunc(durationBeforeKill, func() {
-				if !cmdExited {
-					r.logger.Debug("Current program didn't respond to the Interrupt signal. Sending a Kill signal...")
-					mainCmdCancel()
+			time.AfterFunc(durationWaitBeforeHardKill, func() {
+				if !interrupted {
+					r.logger.Debug("Program didn't stop by Interrupt. Hard killing...", "durationPassed", durationWaitBeforeHardKill)
+					if err := mainCmd.Kill(); err != nil {
+						r.logger.Error("Error hard killing the program", "err", err)
+					}
+					r.logger.Debug("Program was hard killed")
+					killed = true
 				}
 			})
 		}()
 
+		r.logger.Debug("Waiting for program to be done...")
 		err := mainCmd.Wait()
-		cmdExited = true
+		if !killed {
+			interrupted = true
+		}
+		r.logger.Debug("Program is done", "killed", killed, "interrupted", interrupted, "err", err)
 		if err != nil {
 			exitErr, isExit := err.(*exec.ExitError)
 			if !isExit {
@@ -102,13 +109,12 @@ func (r *execer) Exec(ctx context.Context) (Stopper, error) {
 			}
 
 			// Ignore the error if the process was killed by a signal
-			if status.Signaled() && (status.Signal() == os.Interrupt || status.Signal() == os.Kill) {
+			if status.Signaled() && (status.Signal() == os.Interrupt || status.Signal() == os.Kill || status.Signal() == syscall.SIGTERM) {
 				r.logger.Debug("Process exited by signal", "signal", status.Signal(),
 					"pid", exitErr.ProcessState.Pid, "exitCode", exitErr.ProcessState.ExitCode())
 			} else {
 				return err
 			}
-
 		}
 
 		// Run the after command if possible

@@ -124,7 +124,7 @@ func run() error {
 			case <-outerCtx.Done():
 				logger.Info("Stopping the current program and exiting...")
 				err := stopper()
-				if err != nil {
+				if err != nil && err != context.Canceled {
 					logger.Error("Stopping the current program", "err", err)
 					errWatchLoop = err
 				}
@@ -136,7 +136,7 @@ func run() error {
 				// First stop the current execution. This will stop the current main program and then execute
 				// the will run the 'after' command if it exists.
 				err := stopper()
-				if err != nil {
+				if err != nil && err != context.Canceled {
 					logger.Error("Stopping the current program", "err", err)
 					errWatchLoop = err
 					return
@@ -145,9 +145,7 @@ func run() error {
 				logger.Debug("Stopped the current program. Rerun...")
 
 				// Then rerun the program again.
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-				stopper, err = exc.Exec(ctx)
+				stopper, err = exc.Exec(outerCtx)
 				if err != nil {
 					logger.Error("Executing program", "err", err)
 					errWatchLoop = err

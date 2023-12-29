@@ -19,8 +19,8 @@ type Runnable interface {
 	Start() error
 	// Wait blocks till the executable is done.
 	Wait() error
-	// Interrupt interrupts the runnable. The runnable should stop after it gets this call (maybe) doing some clean up.
-	Interrupt() error
+	// Kill hard kills the executable (and any children created).
+	Kill() error
 }
 
 // Creator is a function that returns a Runnable.
@@ -47,11 +47,8 @@ func (o *osCmd) Wait() error {
 	return o.cmd.Wait()
 }
 
-func (o *osCmd) Interrupt() error {
-	if o.cmd.Process == nil {
-		return nil
-	}
-	return o.cmd.Process.Signal(os.Interrupt)
+func (o *osCmd) Kill() error {
+	return syscall.Kill(-o.cmd.Process.Pid, syscall.SIGKILL)
 }
 
 func newCmd(ctx context.Context, command config.CommandWithDir) *exec.Cmd {
@@ -59,8 +56,17 @@ func newCmd(ctx context.Context, command config.CommandWithDir) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
+	// Setting this makes newly created processes have the same pgid. So, if the main command is a bash script that
+	// creates 2 processes (so 3 processes in total), all these processes get the same pgid. Now, when trying to kill
+	// the process created by the main command (the bash process), we also want to kill the 2 processes created by it.
+	// This can be achieved since all 3 processes share the same pgid. We send a signal using -"pgid" which signals
+	// all processes that have group id of pgid. All child processed get pgid as pid of the parent process.
+	// So we send a signal to -"parent.pid" which is equivalent to -"pgid" of the created child processes.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Dir = command.BaseDir
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
+	}
 
 	// Build the envs for the command
 	envs := os.Environ()
